@@ -30,7 +30,6 @@ The repository is organized into the following directories:
 - **GPS\_with\_OLED**: Integration of GPS data display on the OLED screen.
 - **Main**: The primary codebase for the system's core functionalities.
 - **MaterESP**: ESP microcontroller-related configurations and code.
-- **OLED\_with\_SPEED**: Display of speed metrics on the OLED display.
 - **RTOS**: Real-Time Operating System implementations for task management.
 - **Speed**: Modules related to speed calculation and monitoring.
 
