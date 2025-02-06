@@ -1,128 +1,169 @@
-//gps+blinkers+velocity
-// MPU6050: SDA to 21, SCL to 22
-// NEO6M: TX to 16 (RX2), RX to 17 (TX2)
-
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
+#include <SPI.h>
 #include <Wire.h>
-#include <TinyGPS++.h>
+#include <MFRC522.h>
+#include <ESP32Servo.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_MPU6050.h>
 
-#define I2C_SLAVE_ADDR 8  
-#define right 15
-#define left 23
+#define SS_PIN 5          
+#define RST_PIN 4
+#define SERVO_PIN 13      
+#define SCREEN_WIDTH 128  
+#define SCREEN_HEIGHT 64  
 
-float t = 0, t2 = 0, interval = 0, v = 0;
+Servo myServo;
+MFRC522 mfrc522(SS_PIN, RST_PIN);
 
+String authorizedUID = "86 3F 27 25";
+bool isLocked = true;
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 Adafruit_MPU6050 mpu;
-HardwareSerial neogps(1);  // Use UART1 on ESP32
-TinyGPSPlus gps;
+
+int v = 0;
+unsigned long speedZeroTime = 0;
+float t = 0, t2 = 0, interval = 0;
 
 void setup() {
-  pinMode(right, OUTPUT);
-  pinMode(left, OUTPUT);
-  
-  Wire.begin();
+
   Serial.begin(115200);
-  neogps.begin(9600, SERIAL_8N1, 16, 17); // GPS on UART1
-
   while (!Serial) delay(10);
+  Serial.println("Start");
 
-  Serial.println("Initializing MPU6050...");
+  Serial.println("Initializing...");
   if (!mpu.begin()) {
     Serial.println("Failed to find MPU6050 chip");
     while (1) delay(10);
   }
-  Serial.println("MPU6050 Found!");
-
-  Serial.println("GPS initialized.");
-  delay(2000);
+  
+  Wire.begin(21, 22);
+  SPI.begin();
+  mfrc522.PCD_Init();
+  
+  myServo.attach(SERVO_PIN);
+  myServo.write(0);
+  
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 initialization failed"));
+    for (;;);
+  }
+  
+  display.clearDisplay();
+  display.display();
+  homeScreen();
 }
 
 void loop() {
+
   sensors_event_t a, g, temp;
   mpu.getEvent(&a, &g, &temp);
-
-  Serial.print("Acceleration X: "); Serial.print(a.acceleration.x);
-  Serial.print(", Y: "); Serial.print(a.acceleration.y);
-  Serial.print(", Z: "); Serial.print(a.acceleration.z);
-  Serial.println(" m/s^2");
-
-  Serial.print("Rotation X: "); Serial.print(g.gyro.x);
-  Serial.print(", Y: "); Serial.print(g.gyro.y);
-  Serial.print(", Z: "); Serial.print(g.gyro.z);
-  Serial.println(" rad/s");
-
-  Serial.print("Temperature: "); Serial.print(temp.temperature);
-  Serial.println(" degC\n");
-
-  // Read GPS data
-  boolean newData = false;
-  unsigned long start = millis();
-  
-  while (millis() - start < 1000) {
-    while (neogps.available()) {
-      if (gps.encode(neogps.read())) {
-        newData = true;
-      }
-    }
-  }
-
-  if (newData) {
-    Serial.println("GPS Data Received:");
-    print_gps();
-  } else {
-    Serial.println("No GPS data.");
-  }
-
-  // Calculate velocity
   t = millis();
   interval = (t - t2) / 1000.0;
-  v += g.gyro.y * interval * 3.6;
+  float x = g.gyro.x;
+  v += (x * interval * 3.6);
   if (v < 0) v = 0;
+
+  // Serial.print("Speed = ");
+  // Serial.print(v);
+  // Serial.println(" km/h");
+  
+  if (v == 0) {
+    if (speedZeroTime == 0) {
+      speedZeroTime = millis();
+    } else if (millis() - speedZeroTime > 5000) {
+      homeScreen();
+      return;
+    }
+  } else {
+    speedZeroTime = 0;
+  }
+  
   t2 = t;
-  sendSpeedToSlave(v);
+  // delay(1000);
+  displaySpeed(v);
 
-  // Motor control based on acceleration
-  if(a.acceleration.y <-4) {
-    digitalWrite(right, LOW);
-    digitalWrite(left, HIGH);
-    delay(200);
-    digitalWrite(left, LOW);
-  } else if (a.acceleration.y < -1) {
-    digitalWrite(right, LOW);
-    digitalWrite(left, HIGH);
-    delay(400);
-    digitalWrite(left, LOW);
-  } else if (a.acceleration.y > 4) {
-    digitalWrite(left, LOW);
-    digitalWrite(right, HIGH);
-    delay(200);
-    digitalWrite(right, LOW);
-  } else if (a.acceleration.y > 1) {
-    digitalWrite(left, LOW);
-    digitalWrite(right, HIGH);
-    delay(400);
-    digitalWrite(right, LOW);
-  } else {
-    digitalWrite(right, LOW);
-    digitalWrite(left, LOW);
+  if(v==0) {
+    if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+      String scannedUID = "";
+      for (byte i = 0; i < mfrc522.uid.size; i++) {
+        scannedUID += String(mfrc522.uid.uidByte[i], HEX);
+        if (i < mfrc522.uid.size - 1) scannedUID += " ";
+      }
+      scannedUID.toUpperCase();
+      Serial.print("Scanned UID: ");
+      Serial.println(scannedUID);
+
+      if (scannedUID == authorizedUID) {
+        isLocked = !isLocked; 
+        if (isLocked) {
+          Serial.println("Locking...");
+          myServo.write(0);
+        } else {
+          Serial.println("Unlocking...");
+          myServo.write(90);
+        }
+        displayLock();
+      } else {
+        Serial.println("Access Denied!");
+      }
+    
+      mfrc522.PICC_HaltA();
+      mfrc522.PCD_StopCrypto1();
+    }
   }
 }
 
-void print_gps() {
-  if (gps.location.isValid()) {
-    Serial.print("Latitude: "); Serial.print(gps.location.lat(), 6);
-    Serial.print(", Longitude: "); Serial.println(gps.location.lng(), 6);
-    Serial.print("Speed: "); Serial.println(gps.speed.kmph());
-    Serial.print("Satellites: "); Serial.println(gps.satellites.value());
-    Serial.print("Altitude: "); Serial.println(gps.altitude.meters());
-  } else {
-    Serial.println("GPS signal lost.");
-  }
+void homeScreen() {
+
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+
+  String str = isLocked ? "LOCKED" : "UNLOCKED";
+  int textWidth1 = str.length() * 12;
+  int x_center1 = (SCREEN_WIDTH - textWidth1) / 2;
+  display.setCursor(x_center1, 5);
+  display.print(str);
+
+  String secondStr = "Something"; 
+  int textWidth2 = secondStr.length() * 12;
+  int x_center2 = (SCREEN_WIDTH - textWidth2) / 2;
+  display.setCursor(x_center2, 30); 
+  display.print(secondStr);
+
+  display.display();
 }
 
-void sendSpeedToSlave(float speed) {
-  Wire.beginTransmission(I2C_SLAVE_ADDR);
-  Wire.write((int)speed); 
-  Wire.endTransmission();
+
+void displayLock() {
+
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+
+  String str = isLocked ? "LOCKED" : "UNLOCKED";
+  int textWidth = str.length() * 12; 
+  int x_center = (SCREEN_WIDTH - textWidth) / 2;
+  display.setCursor(x_center, 5); 
+  display.print(str);
+  display.display();
+}
+
+void displaySpeed(int num) {
+
+  display.clearDisplay();
+  display.setTextSize(9);
+  display.setTextColor(SSD1306_WHITE);
+
+  String numStr = String(num);
+  int textWidth = numStr.length() * 6 * 9;
+  int textHeight = 8 * 9;
+  int x_center = (SCREEN_WIDTH - textWidth) / 2;
+  int y_center = (SCREEN_HEIGHT - textHeight) / 2;
+
+  display.setCursor(x_center, y_center);
+  display.print(numStr);
+  display.display();
 }
