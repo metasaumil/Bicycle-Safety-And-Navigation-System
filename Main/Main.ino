@@ -11,6 +11,7 @@
 
 #define left 12
 #define right 14
+#define brake 26
 #define SS_PIN 5          
 #define buzzer 27
 #define RST_PIN 22        
@@ -27,7 +28,7 @@ String authorizedUID = "86 3F 27 25";
 Adafruit_MPU6050 mpu;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-int v = 0;
+int lastv = 0, v = 0;
 unsigned long lockTime = 0;
 unsigned long speedZeroTime = 0;
 float t = 0, t2 = 0, interval = 0;
@@ -45,40 +46,47 @@ void task1(void *pvParameters) {
     t = millis();
     interval = (t - t2) / 1000.0;
     float x = g.gyro.x;
+    lastv = v;
     v += (x * interval * 3.6);
+    if(lastv>v&&v!=0)
+      digitalWrite(brake, HIGH);
+    else 
+      digitalWrite(brake, LOW);
     if (v < 0) v = 0;
     
-    if(a.acceleration.y<-4) {
-      digitalWrite(right, LOW);
-      digitalWrite(left, HIGH);
-      digitalWrite(buzzer, HIGH);
-      delay(300);
-      digitalWrite(buzzer, LOW);
-      digitalWrite(left, LOW);
-    } else if(a.acceleration.y<-2) {
-      digitalWrite(right, LOW);
-      digitalWrite(left, HIGH);
-      digitalWrite(buzzer, HIGH);
-      delay(700);
-      digitalWrite(buzzer, LOW);
-      digitalWrite(left, LOW);
-    } else if(a.acceleration.y>4) {
-      digitalWrite(left, LOW);
-      digitalWrite(right, HIGH);
-      digitalWrite(buzzer, HIGH);
-      delay(300);
-      digitalWrite(buzzer, LOW);
-      digitalWrite(right, LOW);
-    } else if(a.acceleration.y>2) {
-      digitalWrite(left, LOW);
-      digitalWrite(right, HIGH);
-      digitalWrite(buzzer, HIGH);
-      delay(700);
-      digitalWrite(buzzer, LOW);
-      digitalWrite(right, LOW);
-    } else {
-      digitalWrite(right, LOW);
-      digitalWrite(left, LOW);
+    if(!(*isLocked)) {
+      if(a.acceleration.y<-4) {
+        digitalWrite(right, LOW);
+        digitalWrite(left, HIGH);
+        digitalWrite(buzzer, HIGH);
+        delay(300);
+        digitalWrite(buzzer, LOW);
+        digitalWrite(left, LOW);
+      } else if(a.acceleration.y<-2) {
+        digitalWrite(right, LOW);
+        digitalWrite(left, HIGH);
+        digitalWrite(buzzer, HIGH);
+        delay(700);
+        digitalWrite(buzzer, LOW);
+        digitalWrite(left, LOW);
+      } else if(a.acceleration.y>4) {
+        digitalWrite(left, LOW);
+        digitalWrite(right, HIGH);
+        digitalWrite(buzzer, HIGH);
+        delay(300);
+        digitalWrite(buzzer, LOW);
+        digitalWrite(right, LOW);
+      } else if(a.acceleration.y>2) {
+        digitalWrite(left, LOW);
+        digitalWrite(right, HIGH);
+        digitalWrite(buzzer, HIGH);
+        delay(700);
+        digitalWrite(buzzer, LOW);
+        digitalWrite(right, LOW);
+      } else {
+        digitalWrite(right, LOW);
+        digitalWrite(left, LOW);
+      }
     }
 
     if (v == 0) {
@@ -135,9 +143,11 @@ void task2(void *pvParameters) {
         }
         digitalWrite(right, HIGH);
         digitalWrite(left, HIGH);
+        digitalWrite(brake, HIGH);
         delay(1000);
         digitalWrite(right, LOW);
         digitalWrite(left, LOW);
+        digitalWrite(brake, LOW);
         displayLock();
       } else {
         Serial.println("Access Denied!");
@@ -160,8 +170,14 @@ void task2(void *pvParameters) {
         display.display();
 
         for(int i = 0; i<15; i++) {
+          digitalWrite(right, HIGH);
+          digitalWrite(left, HIGH);
           digitalWrite(buzzer, HIGH);
+          digitalWrite(brake, HIGH);
           delay(200);
+          digitalWrite(brake, LOW);
+          digitalWrite(right, LOW);
+          digitalWrite(left, LOW);
           digitalWrite(buzzer, LOW);
           delay(200);
         }
@@ -176,8 +192,9 @@ void task2(void *pvParameters) {
 }
 
 void setup() {
-  pinMode(right, OUTPUT);
   pinMode(left, OUTPUT);
+  pinMode(brake, OUTPUT);
+  pinMode(right, OUTPUT);
   pinMode(buzzer, OUTPUT);
 
   Serial.begin(9600);
