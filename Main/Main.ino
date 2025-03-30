@@ -1,10 +1,8 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <MFRC522.h>
-#include <ESP32Servo.h>
-#include <Adafruit_GFX.h>
+#include "esp_sleep.h"
 #include <freertos/task.h>
-#include <Adafruit_Sensor.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_MPU6050.h>
 #include <freertos/FreeRTOS.h>
@@ -16,10 +14,10 @@
 #define buzzer 27
 #define RST_PIN 22        
 #define SERVO_PIN 13      
+#define WAKEUP_PIN 13
 #define SCREEN_WIDTH 128  
-#define SCREEN_HEIGHT 64  
+#define SCREEN_HEIGHT 64       
 
-Servo myServo;
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 
 volatile bool isLocked = true;
@@ -55,32 +53,34 @@ void task1(void *pvParameters) {
     if (v < 0) v = 0;
     
     if(!(*isLocked)) {
+      Serial.print("VAL");
+      Serial.println(a.acceleration.y);
       if(a.acceleration.y<-4) {
         digitalWrite(right, LOW);
         digitalWrite(left, HIGH);
         digitalWrite(buzzer, HIGH);
-        delay(300);
+        vTaskDelay(300 / portTICK_PERIOD_MS);
         digitalWrite(buzzer, LOW);
         digitalWrite(left, LOW);
       } else if(a.acceleration.y<-2) {
         digitalWrite(right, LOW);
         digitalWrite(left, HIGH);
         digitalWrite(buzzer, HIGH);
-        delay(700);
+        vTaskDelay(700 / portTICK_PERIOD_MS);
         digitalWrite(buzzer, LOW);
         digitalWrite(left, LOW);
       } else if(a.acceleration.y>4) {
         digitalWrite(left, LOW);
         digitalWrite(right, HIGH);
         digitalWrite(buzzer, HIGH);
-        delay(300);
+        vTaskDelay(300 / portTICK_PERIOD_MS);
         digitalWrite(buzzer, LOW);
         digitalWrite(right, LOW);
       } else if(a.acceleration.y>2) {
         digitalWrite(left, LOW);
         digitalWrite(right, HIGH);
         digitalWrite(buzzer, HIGH);
-        delay(700);
+        vTaskDelay(700 / portTICK_PERIOD_MS);
         digitalWrite(buzzer, LOW);
         digitalWrite(right, LOW);
       } else {
@@ -93,7 +93,11 @@ void task1(void *pvParameters) {
       if (speedZeroTime == 0) {
         speedZeroTime = millis();
       } else if (millis() - speedZeroTime > 5000) {
-        if (*isLocked && millis() - lockTime > 5000) {
+        if (*isLocked && millis() - lockTime > 10000) {
+          esp_sleep_enable_ext0_wakeup((gpio_num_t)WAKEUP_PIN, LOW);
+          Serial.println("Going to sleep now...");
+          esp_deep_sleep_start();
+        } else if (*isLocked && millis() - lockTime > 5000) {
           display.clearDisplay();
           display.display();
         } else if (!(*isLocked)) {
@@ -130,21 +134,19 @@ void task2(void *pvParameters) {
         lockTime = millis();
         if (*isLocked) {
           Serial.println("Locking...");
-          myServo.write(0);
           digitalWrite(buzzer, HIGH);
-          delay(200);
+          vTaskDelay(200 / portTICK_PERIOD_MS);
           digitalWrite(buzzer, LOW);
         } else {
           Serial.println("Unlocking...");
-          myServo.write(90);
           digitalWrite(buzzer, HIGH);
-          delay(200);
+          vTaskDelay(200 / portTICK_PERIOD_MS);
           digitalWrite(buzzer, LOW);
         }
         digitalWrite(right, HIGH);
         digitalWrite(left, HIGH);
         digitalWrite(brake, HIGH);
-        delay(1000);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
         digitalWrite(right, LOW);
         digitalWrite(left, LOW);
         digitalWrite(brake, LOW);
@@ -174,12 +176,12 @@ void task2(void *pvParameters) {
           digitalWrite(left, HIGH);
           digitalWrite(buzzer, HIGH);
           digitalWrite(brake, HIGH);
-          delay(200);
+          vTaskDelay(200 / portTICK_PERIOD_MS);
           digitalWrite(brake, LOW);
           digitalWrite(right, LOW);
           digitalWrite(left, LOW);
           digitalWrite(buzzer, LOW);
-          delay(200);
+          vTaskDelay(200 / portTICK_PERIOD_MS);
         }
       }
 
@@ -192,27 +194,27 @@ void task2(void *pvParameters) {
 }
 
 void setup() {
+  pinMode(13, OUTPUT);
+  digitalWrite(13, LOW);
+  pinMode(WAKEUP_PIN, INPUT_PULLUP);
   pinMode(left, OUTPUT);
   pinMode(brake, OUTPUT);
   pinMode(right, OUTPUT);
   pinMode(buzzer, OUTPUT);
 
   Serial.begin(9600);
-  while (!Serial) delay(10);
+  while (!Serial) vTaskDelay(10);
 
   Wire.begin(21, 22);
 
   Serial.println("Initializing...");
   if (!mpu.begin()) {
     Serial.println("Failed to find MPU6050 chip");
-    while (1) delay(10);
+    while (1) vTaskDelay(10);
   } else Serial.println("MPU6050 initialized!");
 
   SPI.begin();
   mfrc522.PCD_Init();
-
-  myServo.attach(SERVO_PIN);
-  myServo.write(0);
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println(F("SSD1306 initialization failed"));
@@ -228,7 +230,7 @@ void setup() {
   display.setCursor(x_center2, 5); 
   display.print(secondStr);
   display.display();
-  delay(3000);
+  vTaskDelay(1500);
 
   homeScreen();
 
